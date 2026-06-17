@@ -155,7 +155,7 @@ td { padding: 11px 10px; border-bottom: 1px solid var(--line-soft); white-space:
     </div>
     <div class="header-meta">
       <div>生成日期：<span id="generatedAt"></span></div>
-      <div>满意率口径：好评量 / 评价量加权</div>
+      <div>差评率双轨：差评率(评价)=差评量/评价量，差评率(咨询)=差评量/咨询量</div>
     </div>
   </header>
 
@@ -198,6 +198,8 @@ td { padding: 11px 10px; border-bottom: 1px solid var(--line-soft); white-space:
             <th data-sort="date">日期</th>
             <th data-sort="agent">客服</th>
             <th data-sort="satisfaction" onclick="sortRanking('satisfaction')">满意率 <span class="sort-mark"></span></th>
+            <th data-sort="bad_rate_eval" onclick="sortRanking('bad_rate_eval')">差评率(评价) <span class="sort-mark"></span></th>
+            <th data-sort="bad_rate_consult" onclick="sortRanking('bad_rate_consult')">差评率(咨询) <span class="sort-mark"></span></th>
             <th data-sort="bad" onclick="sortRanking('bad')">差评量 <span class="sort-mark"></span></th>
             <th data-sort="eval" onclick="sortRanking('eval')">评价量 <span class="sort-mark"></span></th>
             <th data-sort="consult" onclick="sortRanking('consult')">咨询量 <span class="sort-mark"></span></th>
@@ -441,12 +443,16 @@ function renderOverview() {
   var totalBad = rows.reduce(function(sum, row) { return sum + num(row['差评量']); }, 0);
   var sat = totalEval > 0 ? totalGood / totalEval * 100 : null;
   var anomalyCount = rows.filter(function(row) { return classifyAgent(row).isAnomaly; }).length;
+  var totalBadRateEval = totalEval > 0 ? (totalBad / totalEval * 100).toFixed(1) + '%' : 'N/A';
+  var totalBadRateConsult = totalConsult > 0 ? (totalBad / totalConsult * 100).toFixed(2) + '%' : 'N/A';
   var cards = [
     ['总咨询量', fmtInt(totalConsult), '当前日期范围'],
     ['总评价量', fmtInt(totalEval), '参与满意率加权'],
     ['好评量', fmtInt(totalGood), '来自原表汇总'],
     ['差评量', fmtInt(totalBad), '用于复盘优先级'],
     ['整体满意率', sat === null ? '无评价' : sat.toFixed(1) + '%', '好评量 / 评价量'],
+    ['差评率(评价)', totalBadRateEval, '差评量 / 评价量 — 客服治理'],
+    ['差评率(咨询)', totalBadRateConsult, '差评量 / 咨询量 — 经营风控'],
     ['异常客服人次', fmtInt(anomalyCount), '按新版异常规则']
   ];
   document.getElementById('kpi-cards').innerHTML = cards.map(function(card) {
@@ -508,6 +514,12 @@ function rankingRows() {
       va = num(a['评价量']); vb = num(b['评价量']);
     } else if (state.sortKey === 'consult') {
       va = num(a['咨询量']); vb = num(b['咨询量']);
+    } else if (state.sortKey === 'bad_rate_eval') {
+      va = num(a['评价量']) > 0 ? num(a['差评量']) / num(a['评价量']) * 100 : 999;
+      vb = num(b['评价量']) > 0 ? num(b['差评量']) / num(b['评价量']) * 100 : 999;
+    } else if (state.sortKey === 'bad_rate_consult') {
+      va = num(a['咨询量']) > 0 ? num(a['差评量']) / num(a['咨询量']) * 100 : 999;
+      vb = num(b['咨询量']) > 0 ? num(b['差评量']) / num(b['咨询量']) * 100 : 999;
     } else if (state.sortKey === 'response') {
       va = num(a['平均响应时长']); vb = num(b['平均响应时长']);
     } else {
@@ -537,20 +549,24 @@ function renderRanking() {
     var cls = classifyAgent(row);
     var selected = state.selectedAgent === row['客服'] ? ' selected' : '';
     var expanded = state.expandedAgent === row['客服'];
+    var badRateEval = evalCount > 0 ? num(row['差评量']) / evalCount * 100 : null;
+    var badRateConsult = num(row['咨询量']) > 0 ? num(row['差评量']) / num(row['咨询量']) * 100 : null;
     var main = '<tr class="rank-row'+selected+'" onclick="selectAgent(\''+escJs(row['客服'])+'\')">'+
       '<td>'+escHtml(row._day || '')+'</td>'+
       '<td><strong>'+escHtml(row['客服'])+'</strong><button class="detail-link" onclick="toggleAgentFields(event, \''+escJs(row['客服'])+'\')">'+(expanded ? '收起字段' : '完整字段')+'</button></td>'+
       '<td class="'+(sat !== null && sat < 90 ? 'text-danger' : 'text-success')+'">'+(sat === null ? '无评价' : sat.toFixed(1)+'%')+'</td>'+
+      '<td class="'+(badRateEval !== null && badRateEval > 30 ? 'text-danger' : '')+'">'+(badRateEval === null ? 'N/A' : badRateEval.toFixed(1)+'%')+'</td>'+
+      '<td class="'+(badRateConsult !== null && badRateConsult > 2 ? 'text-danger' : '')+'">'+(badRateConsult === null ? 'N/A' : badRateConsult.toFixed(2)+'%')+'</td>'+
       '<td class="'+(num(row['差评量']) > 0 ? 'text-danger' : '')+'">'+fmtInt(row['差评量'])+'</td>'+
       '<td>'+fmtInt(row['评价量'])+'</td>'+
       '<td>'+fmtInt(row['咨询量'])+'</td>'+
       '<td>'+displayValue(row['平均响应时长'], 's')+'</td>'+
       '<td><span class="badge '+cls.cls+'">'+cls.label+'</span><div class="rule-note">'+cls.reason+'</div></td>'+
     '</tr>';
-    var detail = expanded ? '<tr class="field-row"><td colspan="8">'+renderAgentFields(row)+'</td></tr>' : '';
+    var detail = expanded ? '<tr class="field-row"><td colspan="10">'+renderAgentFields(row)+'</td></tr>' : '';
     return main + detail;
   }).join('');
-  document.getElementById('agent-tbody').innerHTML = html || '<tr><td colspan="8" class="empty">当前日期无客服数据</td></tr>';
+  document.getElementById('agent-tbody').innerHTML = html || '<tr><td colspan="10" class="empty">当前日期无客服数据</td></tr>';
   renderPagination(total, pageCount);
   updateSortIndicators();
 }
